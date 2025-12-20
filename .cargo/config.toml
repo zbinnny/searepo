@@ -1,0 +1,2 @@
+[patch.crates-io]
+sea-macros = { path = "crates/sea-macros" }

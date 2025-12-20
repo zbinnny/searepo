@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/sea-macros",
+    "crates/searepo",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Repository Contributors"]
+license = "MIT"
+repository = "https://github.com/zbinnny/searepo"
+keywords = ["orm", "database", "repository", "sea-orm", "pattern"]
+categories = ["database"]
+
+[workspace.dependencies]
+sea-macros = { path = "crates/sea-macros", version = "0.1.0" }
+searepo = { path = "crates/searepo", version = "0.1.0" }
+sea-orm = "2.0.0-rc.21"
+sea-orm-migration = "2.0.0-rc.21"

@@ -1,0 +1,20 @@
+[package]
+name = "searepo"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "A Repository pattern library for SeaORM with automatic CRUD generation"
+
+[dependencies]
+sea-macros = { workspace = true }
+sea-orm = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+sea-orm = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-native-tls"] }
+chrono = "0.4"
+

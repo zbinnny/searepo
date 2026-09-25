@@ -2,7 +2,7 @@
 
 一个基于 SeaORM 的 Rust Repository 模式库，通过派生宏自动生成 CRUD 操作。
 
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.94%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## ✨ 特性
@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-searepo = "0.1"
+searepo = "0.2"
 sea-orm = "2.0"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -200,6 +200,28 @@ pub struct UserRepository {
 
 **优先级**: `all` > `include` > `exclude` > 默认 (`find` + `search`)
 
+### 泛型数据库连接
+
+同一个 Repository 可以接收 `Arc<T>` 或 `&T`，由调用方决定事务边界：
+
+```rust
+#[derive(Repository)]
+#[repository(entity = "entities::user", domain = "User", include = ["find", "search"])]
+struct UserRepository<D>
+where
+    D: std::ops::Deref,
+    D::Target: sea_orm::ConnectionTrait + Sized,
+{
+    db: D,
+}
+
+let direct = UserRepository { db: std::sync::Arc::clone(&db) };
+let borrowed = UserRepository { db: db.as_ref() };
+let transactional = UserRepository { db: &tx };
+```
+
+`insert` 和 `upsert` 功能也会生成自动开启事务的批量方法；泛型连接使用这些功能时，还需要 `D::Target: sea_orm::TransactionTrait`。
+
 ## 🔥 高级功能
 
 ### 分页查询
@@ -365,4 +387,3 @@ cargo run --example feature_flags
 ## 📄 许可证
 
 MIT License - 查看 [LICENSE](LICENSE) 文件了解详情。
-

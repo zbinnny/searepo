@@ -3,11 +3,11 @@
 // These tests use an in-memory SQLite database
 
 use sea_orm::{
-    ColumnTrait, Database, DatabaseConnection, DbErr, EntityTrait, QueryFilter, Select,
-    entity::prelude::*,
+    ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
+    Select, TransactionTrait, entity::prelude::*,
 };
 use searepo::{DeleteFilter, FindFilter, OnConflict, Repository, SearchFilter, Upsertable};
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 // ============================================================================
 // Test Entity Definition
 // ============================================================================
@@ -105,6 +105,26 @@ pub struct TestUserRepository {
     db: Arc<DatabaseConnection>,
 }
 
+#[derive(Repository)]
+#[repository(entity = "entities::test_user", domain = "TestUser", all = true)]
+struct GenericUserRepository<D>
+where
+    D: Deref,
+    D::Target: ConnectionTrait + TransactionTrait + Sized,
+{
+    db: D,
+}
+
+#[derive(Repository)]
+#[repository(entity = "entities::test_user", domain = "TestUser", include = ["find"])]
+struct GenericReadRepository<D>
+where
+    D: Deref,
+    D::Target: ConnectionTrait + Sized,
+{
+    db: D,
+}
+
 pub mod filter {
     use super::*;
     use entities::test_user::{Column, Entity};
@@ -195,6 +215,92 @@ async fn setup_test_db() -> Result<Arc<DatabaseConnection>, DbErr> {
     .await?;
 
     Ok(Arc::new(db))
+}
+
+#[tokio::test]
+async fn test_generic_repository_with_connection_and_transaction() {
+    let db = setup_test_db().await.unwrap();
+    let direct = GenericUserRepository {
+        db: Arc::clone(&db),
+    };
+    let user = TestUser {
+        id: 1,
+        username: "alice".to_string(),
+        email: "alice@test.com".to_string(),
+        active: true,
+    };
+    direct.insert(user).await.unwrap();
+    let reader = GenericReadRepository {
+        db: Arc::clone(&db),
+    };
+    assert!(reader.find(filter::Find::ById(1)).await.unwrap().is_some());
+    let borrowed = GenericUserRepository { db: db.as_ref() };
+    assert!(
+        borrowed
+            .find(filter::Find::ById(1))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let borrowed_reader = GenericReadRepository { db: db.as_ref() };
+    assert!(
+        borrowed_reader
+            .find(filter::Find::ById(1))
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let tx = Arc::new(db.begin().await.unwrap());
+    let transactional = GenericUserRepository {
+        db: Arc::clone(&tx),
+    };
+    let user = TestUser {
+        id: 2,
+        username: "bob".to_string(),
+        email: "bob@test.com".to_string(),
+        active: true,
+    };
+    transactional.insert(user).await.unwrap();
+    let tx_reader = GenericReadRepository {
+        db: Arc::clone(&tx),
+    };
+    assert!(
+        tx_reader
+            .find(filter::Find::ById(2))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let borrowed_tx = GenericUserRepository { db: tx.as_ref() };
+    let user = TestUser {
+        id: 3,
+        username: "charlie".to_string(),
+        email: "charlie@test.com".to_string(),
+        active: true,
+    };
+    borrowed_tx.insert(user).await.unwrap();
+    let borrowed_tx_reader = GenericReadRepository { db: tx.as_ref() };
+    assert!(
+        borrowed_tx_reader
+            .find(filter::Find::ById(2))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        transactional
+            .find(filter::Find::ById(3))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    drop(tx_reader);
+    drop(transactional);
+    Arc::into_inner(tx).unwrap().rollback().await.unwrap();
+
+    assert!(direct.find(filter::Find::ById(2)).await.unwrap().is_none());
+    assert!(direct.find(filter::Find::ById(3)).await.unwrap().is_none());
 }
 
 // ============================================================================

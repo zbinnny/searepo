@@ -204,6 +204,7 @@ impl Parse for RepositoryArgs {
 /// Repository 派生宏的实际实现
 pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
     let struct_name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     // 解析 #[repository(...)] 属性
     let mut args = None;
@@ -347,7 +348,7 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
 
             /// 批量插入（自动分块，使用事务）
             pub async fn batch_insert(&self, entities: ::std::vec::Vec<#domain_name>) -> ::std::result::Result<::std::vec::Vec<#domain_name>, ::sea_orm::DbErr> {
-                use ::sea_orm::{ActiveModelTrait, EntityTrait, Iterable, TransactionTrait, TryInsertResult};
+                use ::sea_orm::{ActiveModelTrait, EntityTrait, Iterable, TransactionSession, TransactionTrait, TryInsertResult};
 
                 if entities.is_empty() {
                     return Ok(::std::vec::Vec::new());
@@ -431,7 +432,7 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
             where
                 #domain_name: searepo::Upsertable<#entity_ref>
             {
-                use ::sea_orm::{EntityTrait, Iterable, TransactionTrait};
+                use ::sea_orm::{EntityTrait, Iterable, TransactionSession, TransactionTrait};
 
                 if entities.is_empty() {
                     return Ok(());
@@ -519,7 +520,7 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
 
     // 组合所有方法
     let expanded = quote! {
-        impl #struct_name {
+        impl #impl_generics #struct_name #ty_generics #where_clause {
             #find_methods
             #search_methods
             #insert_methods

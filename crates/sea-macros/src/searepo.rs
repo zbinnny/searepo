@@ -238,7 +238,11 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
             {
                 let select = searepo::FindFilter::to_select(filter);
                 let model = select.one(&*self.#db_field).await?;
-                Ok(model.map(|m| m.into()))
+                model
+                    .map(|m| m.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                        ::sea_orm::DbErr::Custom(error.to_string())
+                    }))
+                    .transpose()
             }
 
             /// 加载单个实体（必须存在）
@@ -281,7 +285,12 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                         // 非分页查询
                         let models = select.all(&*self.#db_field).await?;
                         let total = models.len() as u64;
-                        let items = models.into_iter().map(|m| m.into()).collect();
+                        let items: ::std::vec::Vec<#domain_name> = models
+                            .into_iter()
+                            .map(|m| m.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                                ::sea_orm::DbErr::Custom(error.to_string())
+                            }))
+                            .collect::<::std::result::Result<_, _>>()?;
 
                         searepo::SearchResult::all(items)
                     }
@@ -291,7 +300,12 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                         let paginator = select.paginate(&*self.#db_field, size);
                         let models = paginator.fetch_page(page.saturating_sub(1)).await?;
                         let page_info = paginator.num_items_and_pages().await?;
-                        let items = models.into_iter().map(|m| m.into()).collect();
+                        let items: ::std::vec::Vec<#domain_name> = models
+                            .into_iter()
+                            .map(|m| m.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                                ::sea_orm::DbErr::Custom(error.to_string())
+                            }))
+                            .collect::<::std::result::Result<_, _>>()?;
 
                         searepo::SearchResult::new_pagination(
                             items,
@@ -307,7 +321,12 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                         let paginator = select.paginate(&*self.#db_field, limit);
                         let models = paginator.fetch_page(0).await?;
                         let page_info = paginator.num_items_and_pages().await?;
-                        let items = models.into_iter().map(|m| m.into()).collect();
+                        let items: ::std::vec::Vec<#domain_name> = models
+                            .into_iter()
+                            .map(|m| m.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                                ::sea_orm::DbErr::Custom(error.to_string())
+                            }))
+                            .collect::<::std::result::Result<_, _>>()?;
 
                         searepo::SearchResult::new_pagination(
                             items,
@@ -340,10 +359,17 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
         quote! {
             /// 插入单个实体
             pub async fn insert(&self, entity: #domain_name) -> ::std::result::Result<#domain_name, ::sea_orm::DbErr> {
-                use ::sea_orm::ActiveModelTrait;
-                let active_model: #active_model_ref = entity.into();
-                let model = active_model.insert(&*self.#db_field).await?;
-                Ok(model.into())
+                use ::sea_orm::{ActiveModelTrait, TransactionSession, TransactionTrait};
+                let active_model: #active_model_ref = entity.try_into().map_err(|error: <#active_model_ref as ::std::convert::TryFrom<#domain_name>>::Error| {
+                    ::sea_orm::DbErr::Custom(error.to_string())
+                })?;
+                let tx = self.#db_field.begin().await?;
+                let model = active_model.insert(&tx).await?;
+                let domain: #domain_name = model.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                    ::sea_orm::DbErr::Custom(error.to_string())
+                })?;
+                tx.commit().await?;
+                Ok(domain)
             }
 
             /// 批量插入（自动分块，使用事务）
@@ -364,11 +390,15 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                 assert!(chunk_size > 0, "chunk_size must be greater than 0");
 
                 let mut results = ::std::vec::Vec::with_capacity(entities.len());
-                let mut models_iter = entities.into_iter().map(|e| -> #active_model_ref { e.into() });
+                let mut models_iter = entities.into_iter().map(|e| -> ::std::result::Result<#active_model_ref, ::sea_orm::DbErr> {
+                    e.try_into().map_err(|error: <#active_model_ref as ::std::convert::TryFrom<#domain_name>>::Error| {
+                        ::sea_orm::DbErr::Custom(error.to_string())
+                    })
+                });
 
                 let tx = self.#db_field.begin().await?;
                 loop {
-                    let chunk_n: Vec<_> = models_iter.by_ref().take(chunk_size).collect();
+                    let chunk_n: Vec<_> = models_iter.by_ref().take(chunk_size).collect::<::std::result::Result<_, _>>()?;
                     if chunk_n.is_empty() {
                         break;
                     }
@@ -378,7 +408,13 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                         TryInsertResult::Empty => {}
                         TryInsertResult::Conflicted => {}
                         TryInsertResult::Inserted(inserts) => {
-                            results.extend(inserts.into_iter().map(|m| m.into()));
+                            let domains: ::std::vec::Vec<#domain_name> = inserts
+                                .into_iter()
+                                .map(|m| m.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                                    ::sea_orm::DbErr::Custom(error.to_string())
+                                }))
+                                .collect::<::std::result::Result<_, _>>()?;
+                            results.extend(domains);
                         }
                     }
                 }
@@ -395,10 +431,17 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
         quote! {
             /// 更新实体
             pub async fn update(&self, entity: #domain_name) -> ::std::result::Result<#domain_name, ::sea_orm::DbErr> {
-                use ::sea_orm::ActiveModelTrait;
-                let active_model: #active_model_ref = entity.into();
-                let model = active_model.update(&*self.#db_field).await?;
-                Ok(model.into())
+                use ::sea_orm::{ActiveModelTrait, TransactionSession, TransactionTrait};
+                let active_model: #active_model_ref = entity.try_into().map_err(|error: <#active_model_ref as ::std::convert::TryFrom<#domain_name>>::Error| {
+                    ::sea_orm::DbErr::Custom(error.to_string())
+                })?;
+                let tx = self.#db_field.begin().await?;
+                let model = active_model.update(&tx).await?;
+                let domain: #domain_name = model.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                    ::sea_orm::DbErr::Custom(error.to_string())
+                })?;
+                tx.commit().await?;
+                Ok(domain)
             }
         }
     } else {
@@ -413,7 +456,9 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                 #domain_name: searepo::Upsertable<#entity_ref>
             {
                 use ::sea_orm::EntityTrait;
-                let active_model: #active_model_ref = entity.into();
+                let active_model: #active_model_ref = entity.try_into().map_err(|error: <#active_model_ref as ::std::convert::TryFrom<#domain_name>>::Error| {
+                    ::sea_orm::DbErr::Custom(error.to_string())
+                })?;
                 let on_conflict = <#domain_name as searepo::Upsertable<#entity_ref>>::on_conflict();
 
                 match #entity_ref::insert(active_model)
@@ -445,12 +490,16 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
                 let chunk_size = (u16::MAX / column_count) as usize;
                 assert!(chunk_size > 0, "chunk_size must be greater than 0");
 
-                let mut models_iter = entities.into_iter().map(|e: #domain_name| -> #active_model_ref { e.into() });
+                let mut models_iter = entities.into_iter().map(|e: #domain_name| -> ::std::result::Result<#active_model_ref, ::sea_orm::DbErr> {
+                    e.try_into().map_err(|error: <#active_model_ref as ::std::convert::TryFrom<#domain_name>>::Error| {
+                        ::sea_orm::DbErr::Custom(error.to_string())
+                    })
+                });
                 let on_conflict = <#domain_name as searepo::Upsertable<#entity_ref>>::on_conflict();
 
                 let tx = self.#db_field.begin().await?;
                 loop {
-                    let chunk: ::std::vec::Vec<_> = models_iter.by_ref().take(chunk_size).collect();
+                    let chunk: ::std::vec::Vec<_> = models_iter.by_ref().take(chunk_size).collect::<::std::result::Result<_, _>>()?;
                     if chunk.is_empty() {
                         break;
                     }
@@ -484,8 +533,11 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
 
                 // 转换为领域对象
                 let entities: ::std::vec::Vec<#domain_name> = models.iter()
-                    .map(|m| m.clone().into())
-                    .collect();
+                    .cloned()
+                    .map(|m| m.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
+                        ::sea_orm::DbErr::Custom(error.to_string())
+                    }))
+                    .collect::<::std::result::Result<_, _>>()?;
 
                 // 删除这些实体
                 for model in models {

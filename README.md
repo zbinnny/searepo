@@ -368,11 +368,13 @@ pub struct DataSyncRepository {
 
 | 功能                  | 需要实现的 Trait                                              |
 |---------------------|----------------------------------------------------------|
-| `find`              | `FindFilter`                                             |
-| `search`            | `SearchFilter`                                           |
-| `insert` / `update` | `From<Domain> for ActiveModel`, `From<Model> for Domain` |
-| `delete`            | `DeleteFilter`                                           |
-| `upsert`            | `Upsertable`, `From<Domain> for ActiveModel`             |
+| `find`              | `FindFilter`, `TryFrom<Model> for Domain`               |
+| `search`            | `SearchFilter`, `TryFrom<Model> for Domain`             |
+| `insert` / `update` | `TryFrom<Domain> for ActiveModel`, `TryFrom<Model> for Domain` |
+| `delete`            | `DeleteFilter`, `TryFrom<Model> for Domain`             |
+| `upsert`            | `Upsertable`, `TryFrom<Domain> for ActiveModel`          |
+
+已有的 `From` 实现仍可使用；Rust 会提供对应的 `TryFrom` 实现。转换错误需要实现 `Display`，仓储将其返回为 `DbErr::Custom`。`insert`、`update` 和批量写入在转换失败时回滚事务。
 
 ## 📝 示例
 

@@ -95,6 +95,31 @@ impl From<TestUser> for entities::test_user::ActiveModel {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ValidatedUser(TestUser);
+
+impl TryFrom<entities::test_user::Model> for ValidatedUser {
+    type Error = &'static str;
+
+    fn try_from(model: entities::test_user::Model) -> Result<Self, Self::Error> {
+        if model.username == "invalid" {
+            return Err("invalid username");
+        }
+        Ok(Self(model.into()))
+    }
+}
+
+impl TryFrom<ValidatedUser> for entities::test_user::ActiveModel {
+    type Error = &'static str;
+
+    fn try_from(user: ValidatedUser) -> Result<Self, Self::Error> {
+        if user.0.email.is_empty() {
+            return Err("email is required");
+        }
+        Ok(user.0.into())
+    }
+}
+
 // ============================================================================
 // Repository Definition
 // ============================================================================
@@ -102,6 +127,12 @@ impl From<TestUser> for entities::test_user::ActiveModel {
 #[derive(Repository)]
 #[repository(entity = "entities::test_user", domain = "TestUser", all = true)]
 pub struct TestUserRepository {
+    db: Arc<DatabaseConnection>,
+}
+
+#[derive(Repository)]
+#[repository(entity = "entities::test_user", domain = "ValidatedUser", include = ["find", "search", "insert", "update"])]
+struct ValidatedUserRepository {
     db: Arc<DatabaseConnection>,
 }
 
@@ -215,6 +246,80 @@ async fn setup_test_db() -> Result<Arc<DatabaseConnection>, DbErr> {
     .await?;
 
     Ok(Arc::new(db))
+}
+
+#[tokio::test]
+async fn fallible_domain_conversion_returns_errors_and_rolls_back_writes() {
+    let db = setup_test_db().await.unwrap();
+    let repo = ValidatedUserRepository {
+        db: Arc::clone(&db),
+    };
+
+    let valid = TestUser {
+        id: 1,
+        username: "valid".into(),
+        email: "valid@example.com".into(),
+        active: true,
+    };
+    repo.insert(ValidatedUser(valid.clone())).await.unwrap();
+    assert_eq!(
+        repo.find(filter::Find::ById(1)).await.unwrap().unwrap().0,
+        valid
+    );
+
+    let mut invalid_input = valid.clone();
+    invalid_input.id = 2;
+    invalid_input.email.clear();
+    assert!(
+        matches!(repo.insert(ValidatedUser(invalid_input)).await, Err(DbErr::Custom(message)) if message == "email is required")
+    );
+    assert!(
+        entities::test_user::Entity::find_by_id(2)
+            .one(db.as_ref())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let mut invalid_output = valid.clone();
+    invalid_output.id = 3;
+    invalid_output.username = "invalid".into();
+    assert!(
+        matches!(repo.insert(ValidatedUser(invalid_output)).await, Err(DbErr::Custom(message)) if message == "invalid username")
+    );
+    assert!(
+        entities::test_user::Entity::find_by_id(3)
+            .one(db.as_ref())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let mut invalid_update = valid.clone();
+    invalid_update.username = "invalid".into();
+    assert!(
+        matches!(repo.update(ValidatedUser(invalid_update)).await, Err(DbErr::Custom(message)) if message == "invalid username")
+    );
+    assert_eq!(
+        repo.find(filter::Find::ById(1)).await.unwrap().unwrap().0,
+        valid
+    );
+
+    entities::test_user::Entity::insert(entities::test_user::ActiveModel::from(TestUser {
+        id: 4,
+        username: "invalid".into(),
+        email: "invalid@example.com".into(),
+        active: true,
+    }))
+    .exec(db.as_ref())
+    .await
+    .unwrap();
+    assert!(
+        matches!(repo.find(filter::Find::ById(4)).await, Err(DbErr::Custom(message)) if message == "invalid username")
+    );
+    assert!(
+        matches!(repo.search(filter::Search::default()).await, Err(DbErr::Custom(message)) if message == "invalid username")
+    );
 }
 
 #[tokio::test]

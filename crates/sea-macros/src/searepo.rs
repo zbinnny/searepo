@@ -431,16 +431,14 @@ pub(crate) fn derive_searepo_impl(input: DeriveInput) -> TokenStream {
         quote! {
             /// 更新实体
             pub async fn update(&self, entity: #domain_name) -> ::std::result::Result<#domain_name, ::sea_orm::DbErr> {
-                use ::sea_orm::{ActiveModelTrait, TransactionSession, TransactionTrait};
+                use ::sea_orm::ActiveModelTrait;
                 let active_model: #active_model_ref = entity.try_into().map_err(|error: <#active_model_ref as ::std::convert::TryFrom<#domain_name>>::Error| {
                     ::sea_orm::DbErr::Custom(error.to_string())
                 })?;
-                let tx = self.#db_field.begin().await?;
-                let model = active_model.update(&tx).await?;
+                let model = active_model.update(&*self.#db_field).await?;
                 let domain: #domain_name = model.try_into().map_err(|error: <#domain_name as ::std::convert::TryFrom<#entity_path::Model>>::Error| {
                     ::sea_orm::DbErr::Custom(error.to_string())
                 })?;
-                tx.commit().await?;
                 Ok(domain)
             }
         }

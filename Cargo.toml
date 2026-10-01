@@ -6,7 +6,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Repository Contributors"]
@@ -16,7 +16,7 @@ keywords = ["orm", "database", "repository", "sea-orm", "pattern"]
 categories = ["database"]
 
 [workspace.dependencies]
-sea-macros = { path = "crates/sea-macros", version = "0.3.0" }
-searepo = { path = "crates/searepo", version = "0.3.0" }
+sea-macros = { path = "crates/sea-macros", version = "0.3.1" }
+searepo = { path = "crates/searepo", version = "0.3.1" }
 sea-orm = "2.0.3"
 sea-orm-migration = "2.0.3"

@@ -156,6 +156,16 @@ where
     db: D,
 }
 
+#[derive(Repository)]
+#[repository(entity = "entities::test_user", domain = "TestUser", include = ["update"])]
+struct GenericUpdateRepository<D>
+where
+    D: Deref,
+    D::Target: ConnectionTrait + Sized,
+{
+    db: D,
+}
+
 pub mod filter {
     use super::*;
     use entities::test_user::{Column, Entity};
@@ -249,7 +259,7 @@ async fn setup_test_db() -> Result<Arc<DatabaseConnection>, DbErr> {
 }
 
 #[tokio::test]
-async fn fallible_domain_conversion_returns_errors_and_rolls_back_writes() {
+async fn fallible_domain_conversion_returns_errors_and_rolls_back_inserts() {
     let db = setup_test_db().await.unwrap();
     let repo = ValidatedUserRepository {
         db: Arc::clone(&db),
@@ -295,16 +305,6 @@ async fn fallible_domain_conversion_returns_errors_and_rolls_back_writes() {
             .is_none()
     );
 
-    let mut invalid_update = valid.clone();
-    invalid_update.username = "invalid".into();
-    assert!(
-        matches!(repo.update(ValidatedUser(invalid_update)).await, Err(DbErr::Custom(message)) if message == "invalid username")
-    );
-    assert_eq!(
-        repo.find(filter::Find::ById(1)).await.unwrap().unwrap().0,
-        valid
-    );
-
     entities::test_user::Entity::insert(entities::test_user::ActiveModel::from(TestUser {
         id: 4,
         username: "invalid".into(),
@@ -320,6 +320,33 @@ async fn fallible_domain_conversion_returns_errors_and_rolls_back_writes() {
     assert!(
         matches!(repo.search(filter::Search::default()).await, Err(DbErr::Custom(message)) if message == "invalid username")
     );
+}
+
+#[tokio::test]
+async fn update_output_conversion_error_does_not_rollback_write() {
+    let db = setup_test_db().await.unwrap();
+    let repo = ValidatedUserRepository {
+        db: Arc::clone(&db),
+    };
+    let user = TestUser {
+        id: 1,
+        username: "valid".into(),
+        email: "valid@example.com".into(),
+        active: true,
+    };
+    repo.insert(ValidatedUser(user.clone())).await.unwrap();
+
+    let mut invalid_update = user;
+    invalid_update.username = "invalid".into();
+    assert!(
+        matches!(repo.update(ValidatedUser(invalid_update.clone())).await, Err(DbErr::Custom(message)) if message == "invalid username")
+    );
+    let model = entities::test_user::Entity::find_by_id(1)
+        .one(db.as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(TestUser::from(model), invalid_update);
 }
 
 #[tokio::test]
@@ -602,10 +629,10 @@ async fn test_cursor_pagination() {
             let mut select = entities::test_user::Entity::find();
 
             // 如果有 cursor，则过滤 id > cursor 的记录
-            if let Some(cursor) = self.cursor {
-                if cursor > 0 {
-                    select = select.filter(Column::Id.gt(cursor as i32));
-                }
+            if let Some(cursor) = self.cursor
+                && cursor > 0
+            {
+                select = select.filter(Column::Id.gt(cursor as i32));
             }
 
             select
@@ -675,6 +702,47 @@ async fn test_update() {
     // Verify update
     let found = repo.load(filter::Find::ById(1)).await.unwrap();
     assert_eq!(found.username, "alice_updated");
+}
+
+#[tokio::test]
+async fn test_update_with_connection_only_repository() {
+    let db = setup_test_db().await.unwrap();
+    let mut user = TestUser {
+        id: 1,
+        username: "alice".into(),
+        email: "alice@test.com".into(),
+        active: true,
+    };
+    entities::test_user::Entity::insert(entities::test_user::ActiveModel::from(user.clone()))
+        .exec(db.as_ref())
+        .await
+        .unwrap();
+
+    let direct = GenericUpdateRepository {
+        db: Arc::clone(&db),
+    };
+    user.username = "alice_updated".into();
+    assert_eq!(direct.update(user.clone()).await.unwrap(), user);
+
+    let tx = db.begin().await.unwrap();
+    let transactional = GenericUpdateRepository { db: &tx };
+    let mut transactional_user = user.clone();
+    transactional_user.username = "alice_in_transaction".into();
+    assert_eq!(
+        transactional
+            .update(transactional_user.clone())
+            .await
+            .unwrap(),
+        transactional_user
+    );
+    tx.rollback().await.unwrap();
+
+    let model = entities::test_user::Entity::find_by_id(1)
+        .one(db.as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(TestUser::from(model), user);
 }
 
 #[tokio::test]

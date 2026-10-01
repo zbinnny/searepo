@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-10-01
+
+### Fixed
+
+- `update` 直接使用传入的数据库连接，不再自行开启或提交事务。
+- 仅启用 `update` 的泛型仓储只需 `ConnectionTrait`，无需 `TransactionTrait`。
+- 更新成功后的领域对象转换失败仍返回 `DbErr::Custom`，但不自动回滚更新；事务边界由调用方管理。
+
 ## [1.0.0] - 2024
 
 ### Features
@@ -85,4 +93,3 @@ pub struct SearchResult<T> {
 - `SearchFilter`: 列表搜索过滤器（支持分页）
 - `DeleteFilter`: 删除过滤器
 - `Upsertable`: Upsert 冲突处理策略
-

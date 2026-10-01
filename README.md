@@ -220,7 +220,7 @@ let borrowed = UserRepository { db: db.as_ref() };
 let transactional = UserRepository { db: &tx };
 ```
 
-`insert` 和 `upsert` 功能也会生成自动开启事务的批量方法；泛型连接使用这些功能时，还需要 `D::Target: sea_orm::TransactionTrait`。
+`update` 直接使用传入的连接，不会自行开启事务，泛型连接只需要 `D::Target: sea_orm::ConnectionTrait + Sized`。`insert` 和 `upsert` 功能也会生成自动开启事务的批量方法；泛型连接使用这些功能时，还需要 `D::Target: sea_orm::TransactionTrait`。
 
 ## 🔥 高级功能
 
@@ -374,7 +374,7 @@ pub struct DataSyncRepository {
 | `delete`            | `DeleteFilter`, `TryFrom<Model> for Domain`             |
 | `upsert`            | `Upsertable`, `TryFrom<Domain> for ActiveModel`          |
 
-已有的 `From` 实现仍可使用；Rust 会提供对应的 `TryFrom` 实现。转换错误需要实现 `Display`，仓储将其返回为 `DbErr::Custom`。`insert`、`update` 和批量写入在转换失败时回滚事务。
+已有的 `From` 实现仍可使用；Rust 会提供对应的 `TryFrom` 实现。转换错误需要实现 `Display`，仓储将其返回为 `DbErr::Custom`。`insert` 和批量写入在转换失败时回滚事务。`update` 不会自行开启事务，返回值转换失败时不会自动回滚已完成的更新；需要回滚时，由调用方传入事务并管理其边界。
 
 ## 📝 示例
 
